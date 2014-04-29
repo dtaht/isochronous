@@ -54,6 +54,7 @@ struct msg {
 struct logger {
   struct msg msg;
   struct timeval ts;
+  uint8_t tos;
 };
 
 void htonmsg(struct msg *m)
@@ -81,12 +82,19 @@ void ntohmsg(struct msg *m)
 char rbuf[64 * 1024];
 char tbuf[64 * 1024];
 
-static unsigned int ecn = 2;
-static unsigned int ecn_seen = 0;
-static unsigned int ect_seen = 0;
-static unsigned int dscp = 0x20;
+static uint32_t ecn = 0;
+static uint32_t ecn_seen = 0;
+static uint32_t ect_seen = 0;
+static uint32_t dscp = 0;
+static uint32_t dots = 0;
+static uint32_t quiet = 0;
+static uint32_t sweep = 0;
+static uint32_t want_timestamps = 0;
+static uint32_t want_tos = 0;
+static uint32_t want_server = 0;
+static double packets_per_sec = 0.0;
 
-void server(void)
+int server(void)
 {
   int s, r;
   struct sockaddr_in6 sa, rsa;
@@ -105,12 +113,11 @@ void server(void)
   dscp |= ecn;
 
   if ( setsockopt( s, IPPROTO_IPV6, IPV6_TCLASS, &dscp, sizeof (dscp)) < 0 ) {
-    perror( "setsockopt( IP_TCLASS )" );
+    perror( "setsockopt( IPV6_TCLASS )" );
   }
   if ( setsockopt( s, IPPROTO_IP, IP_TOS, &dscp, sizeof (dscp)) < 0 ) {
     perror( "setsockopt( IP_TOS )" );
   }
-
 
   do {
     struct msg *rm = (struct msg *) rbuf;
@@ -160,6 +167,7 @@ void server(void)
         fprintf(stderr, "short sendto (expected %d, got %d)\n", rm->size, r);
     }
   } while (1);
+  return 0;
 }
 
 int sizetoi(char *p)
@@ -187,10 +195,29 @@ int sizetoi(char *p)
   return r;
 }
 
+static void usage_and_die(char *argv0, int n, int size) {
+      fprintf(stderr, "usage: %s -f{rom} host\n"
+      		      "    or    -t{o} host\n"
+      		      "    or    -b{dir} host\n"
+	              "    or    -S server mode\n"
+      		      "          [ -n number ] (default = %d)\n"
+	              "          [ -s size ] (default = %d\n"
+	              "          [ -q ] quiet \n"
+	              "          [ -d ] print dots \n"
+	              "          [ -E ] enable ecn\n"
+	              "          [ -D value ] dscp (tos) value \n"
+	              "          [ -C ] print dscp (tos) values \n"
+	              "          [ -r value ] packets_per_sec \n"
+	              "          [ -T ] timestamp recv \n"
+	      "          [ -h ] help \n",
+              argv0, n, size);
+      exit(99);
+}
 
 int main(int argc, char *argv[])
 {
   int error = 0;
+  int c;
   if (argc < 2) {
     fprintf(stderr, "%s: starting server\n", argv[0]);
     server();
@@ -210,39 +237,72 @@ int main(int argc, char *argv[])
     char asciiport[16];
 
     /* summary of results */
-    unsigned int consecutive = 0;
-    unsigned int out_of_order = 0;
-    unsigned int adjacent_dups = 0;
-    unsigned int count = 0;
-    unsigned int recent = 0;
+    uint32_t consecutive = 0;
+    uint32_t out_of_order = 0;
+    uint32_t adjacent_dups = 0;
+    uint32_t count = 0;
+    uint32_t recent = 0;
 
     tm->size = 64;
     tm->n = 32;
     tm->cookie = getpid();
 
-    if (argc < 3) {
-    usage:
-      fprintf(stderr, "usage: %s --from host [number] [msgsize]\n"
-      		      "    or    --to host [number] [msgsize]\n"
-      		      "    or    --bdir host [number] [msgsize]\n"
-      		      "   default number = %d, default msgsize = %d\n",
-              argv[0], tm->n, tm->size);
-      exit(1);
+    while ((c = getopt(argc, argv, "f:t:s:n:D:r:SEqdTCh?")) >= 0) {
+      switch (c) {
+      case 'f':
+	tm->cmd = CMD_SEND;
+	break;
+      case 't':
+	tm->cmd = CMD_SINK;
+	break;
+	// case 'b':
+	// tm->cmd = CMD_BIDIR;
+	// break;
+      case 'n':
+	tm->n = sizetoi(optarg);
+	break;
+      case 'S':
+	want_server = 1;
+	break;
+      case 's':
+	tm->size = sizetoi(optarg);
+	break;
+      case 'q':
+	quiet = 1;
+	break;
+      case 'd':
+	dots = 1;
+	break;
+      case 'D':
+	dscp = atoi(optarg);
+	break;
+      case 'E':
+	ecn = 2;
+	break;
+      case 'C':
+	want_tos = 1;
+	break;
+      case 'T':
+	want_timestamps = 1;
+	break;
+      case 'r':
+	packets_per_sec = atof(optarg);
+	if (packets_per_sec < 0.001 || packets_per_sec > 1e6) {
+	  fprintf(stderr, "%s: packets per sec (-r) must be 0.001..1000000\n",
+		  argv[0]);
+	  return 99;
+      }
+      break;
+      case 'h':
+      case '?':
+      default:
+	usage_and_die(argv[0], tm->n, tm->size);
+	break;
+      }
     }
-    if (strcmp(argv[1], "from") == 0) {
-      tm->cmd = CMD_SEND;
-#if 0
-    } else if (strcmp(argv[1], "to") == 0) {
-      tm->cmd = CMD_SINK;
-#endif
-    } else
-      goto usage;
-
-    if (argc > 3)
-      tm->n = sizetoi(argv[3]);
-    if (argc > 4)
-      tm->size = sizetoi(argv[4]);
-
+  
+    if(want_server) { exit(server()); }
+ 
     htonmsg(tm);
 
     memset(&hints, 0, sizeof hints);
@@ -301,6 +361,7 @@ int main(int argc, char *argv[])
 #else
 #warning NO IP_RECVTOS
 #endif
+
     r = send(s, tm, sizeof *tm, 0);
     if (r < 0) {
       pe("send");
@@ -323,25 +384,25 @@ int main(int argc, char *argv[])
       struct msghdr header;
       struct iovec msg_iovec;
       int congestion_experienced = 0;
-  char msg_control[ 1500 ];
-  uint8_t *ecn_octet_p = NULL;
+      char msg_control[ 1500 ];
+      uint8_t *ecn_octet_p = NULL;
 
-  /* receive source address */
-//  header.msg_name = &packet_remote_addr.sa;
-//  header.msg_namelen = sizeof( packet_remote_addr );
+      /* receive source address */
+      //  header.msg_name = &packet_remote_addr.sa;
+      //  header.msg_namelen = sizeof( packet_remote_addr );
 
-  /* receive payload */
-  msg_iovec.iov_base = rbuf;
-  msg_iovec.iov_len = 1500;
-  header.msg_iov = &msg_iovec;
-  header.msg_iovlen = 1;
+      /* receive payload */
+      msg_iovec.iov_base = rbuf;
+      msg_iovec.iov_len = 1500;
+      header.msg_iov = &msg_iovec;
+      header.msg_iovlen = 1;
 
-  /* receive explicit congestion notification */
-  header.msg_control = msg_control;
-  header.msg_controllen = 1500;
+      /* receive explicit congestion notification */
+      header.msg_control = msg_control;
+      header.msg_controllen = 1500;
 
-  /* receive flags */
-  header.msg_flags = 0;
+      /* receive flags */
+      header.msg_flags = 0;
 
       if (ps.revents & POLLIN || ps.revents & POLLERR) {
         r = recvmsg(s, &header,  0);
@@ -350,18 +411,21 @@ int main(int argc, char *argv[])
 	  error = 1;
 	  break;
         }
-
-      struct cmsghdr *ecn_hdr = CMSG_FIRSTHDR( &header );
-  if ( ecn_hdr
-       && (ecn_hdr->cmsg_level == IPPROTO_IP)
-       && (ecn_hdr->cmsg_type == IP_TOS) ) {
-    /* got one */
-    ecn_octet_p = (uint8_t *)CMSG_DATA( ecn_hdr );
-
-    if ( (*ecn_octet_p & 0x03) == 0x03 ) {
-      congestion_experienced = 1;
-    }
-  }
+	
+	struct cmsghdr *ecn_hdr = CMSG_FIRSTHDR( &header );
+	if ( ecn_hdr
+	     && ((ecn_hdr->cmsg_level == IPPROTO_IP)
+		 && (ecn_hdr->cmsg_type == IP_TOS) 
+		 || ((ecn_hdr->cmsg_level == IPPROTO_IPV6)
+		     && ecn_hdr->cmsg_type == IPV6_TCLASS)))
+	  {
+	  /* got one */
+	  ecn_octet_p = (uint8_t *)CMSG_DATA( ecn_hdr );
+	  
+	  if ( (*ecn_octet_p & 0x03) == 0x03 ) {
+	    congestion_experienced = 1;
+	  }
+	}
 	
         ntohmsg(rm);
 #if 0
@@ -380,7 +444,9 @@ int main(int argc, char *argv[])
         }
 	if (rm->n < tm->n) {
 		memcpy(&log[rm->n].msg,rm,sizeof(struct msg));
+		log[rm->n].tos = *ecn_octet_p;
 	}
+
 	if(congestion_experienced)
 	  ect_seen++;
         if (count > 0 && rm->n < recent)
@@ -411,10 +477,20 @@ int main(int argc, char *argv[])
 	     " %d ect\n",
 	     tm->size, count, tm->n, consecutive, out_of_order, adjacent_dups,
 	     ect_seen);
+      if(dots) {
       for(int i = 0; i < tm->n; i++) {
 	if(log[i].msg.n > 0) printf("."); else printf(" ");
 	  if(i%72==0) printf("\n");
 	}
+      }
+
+      if(want_tos) {
+      for(int i = 0; i < tm->n; i++) {
+	if(log[i].msg.n > 0) printf("%2x",log[i].tos); else printf("  ");
+	  if(i%36==0) printf("\n");
+	}
+      }
+
       printf("\n");
     }
 
