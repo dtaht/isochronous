@@ -83,8 +83,9 @@ struct Packet {
 };
 
 
-int want_to_die;
-
+static uint32_t want_to_die = 0;
+static uint32_t ecn = 0;
+static uint32_t dscp = 0; // 0x22;
 
 static void sighandler(int sig) {
   want_to_die = 1;
@@ -143,6 +144,8 @@ static void usage_and_die(char *argv0) {
           "      -f <lines/sec>  max output lines per second\n"
           "      -r <pps>        packets per second (default=%g)\n"
           "      -q              quiet mode (don't print packets)\n"
+          "      -D <value>      dscp value\n"
+          "      -E              ecn mode\n"
           "      -T              print timestamps\n",
           argv0, argv0, (double)DEFAULT_PACKETS_PER_SEC);
   exit(99);
@@ -210,7 +213,7 @@ int main(int argc, char **argv) {
   double packets_per_sec = DEFAULT_PACKETS_PER_SEC, prints_per_sec = -1;
 
   int c;
-  while ((c = getopt(argc, argv, "f:r:qTh?")) >= 0) {
+  while ((c = getopt(argc, argv, "f:r:D:EqTh?")) >= 0) {
     switch (c) {
     case 'f':
       prints_per_sec = atof(optarg);
@@ -229,6 +232,12 @@ int main(int argc, char **argv) {
       break;
     case 'q':
       quiet = 1;
+      break;
+    case 'D':
+      dscp = atoi(optarg);
+      break;
+    case 'E':
+      ecn = 2;
       break;
     case 'T':
       want_timestamps = 1;
@@ -296,6 +305,16 @@ int main(int argc, char **argv) {
   if (setsockopt(sock, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl))) {
     perror("setsockopt");
     return 1;
+  }
+
+  dscp |= ecn;
+
+  if (setsockopt(sock, IPPROTO_IPV6, IPV6_TCLASS, &dscp, sizeof(dscp))) {
+    perror("setsockopt IPV6 TCLASS");
+  }
+
+  if (setsockopt(sock, IPPROTO_IP, IP_TOS, &dscp, 1)) {
+    perror("setsockopt TOS");
   }
 
   int32_t usec_per_pkt = 1e6 / packets_per_sec;
