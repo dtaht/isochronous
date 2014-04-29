@@ -81,6 +81,11 @@ void ntohmsg(struct msg *m)
 char rbuf[64 * 1024];
 char tbuf[64 * 1024];
 
+static unsigned int ecn = 2;
+static unsigned int ecn_seen = 0;
+static unsigned int ect_seen = 0;
+static unsigned int dscp = 0x20;
+
 void server(void)
 {
   int s, r;
@@ -97,6 +102,15 @@ void server(void)
 
   r = bind(s, (struct sockaddr *) &sa, sizeof sa);
   if (r < 0) pe("bind");
+  dscp |= ecn;
+
+  if ( setsockopt( s, IPPROTO_IPV6, IPV6_TCLASS, &dscp, sizeof (dscp)) < 0 ) {
+    perror( "setsockopt( IP_TCLASS )" );
+  }
+  if ( setsockopt( s, IPPROTO_IP, IP_TOS, &dscp, sizeof (dscp)) < 0 ) {
+    perror( "setsockopt( IP_TOS )" );
+  }
+
 
   do {
     struct msg *rm = (struct msg *) rbuf;
@@ -208,12 +222,11 @@ int main(int argc, char *argv[])
 
     if (argc < 3) {
     usage:
-      fprintf(stderr, "usage: %s from host [number] [msgsize]\n", argv[0]);
-#if 0
-      fprintf(stderr, "    or %s to host [number] [msgsize]\n", argv[0]);
-#endif
-      fprintf(stderr, "   default number = %d, default msgsize = %d\n",
-              tm->n, tm->size);
+      fprintf(stderr, "usage: %s --from host [number] [msgsize]\n"
+      		      "    or    --to host [number] [msgsize]\n"
+      		      "    or    --bdir host [number] [msgsize]\n"
+      		      "   default number = %d, default msgsize = %d\n",
+              argv[0], tm->n, tm->size);
       exit(1);
     }
     if (strcmp(argv[1], "from") == 0) {
@@ -271,6 +284,23 @@ int main(int argc, char *argv[])
 
     freeaddrinfo(result);
 
+  dscp |= ecn;
+
+  if ( setsockopt( s, IPPROTO_IP, IP_TOS, &dscp, sizeof (dscp)) < 0 ) {
+    perror( "setsockopt( IP_TOS )" );
+  }
+
+  /* request explicit congestion notification and dscp on received datagrams */
+
+#ifdef IP_RECVTOS
+  int tosflag = 1;
+  socklen_t tosoptlen = sizeof( tosflag );
+  if ( setsockopt( s, IPPROTO_IP, IP_RECVTOS, &tosflag, tosoptlen ) < 0 ) {
+    perror( "setsockopt( IP_RECVTOS )" );
+  }
+#else
+#warning NO IP_RECVTOS
+#endif
     r = send(s, tm, sizeof *tm, 0);
     if (r < 0) {
       pe("send");
@@ -283,20 +313,56 @@ int main(int argc, char *argv[])
     ntohmsg(tm); /* swap some fields back so we can use them below */
 
     struct logger log[tm->n];
-    memset(log,0,tm->n * sizeof(struct logger));
+    memset(log,0, tm->n * sizeof(struct logger));
     do {
 
       struct pollfd ps = { .fd = s, .events = POLLIN };
 
       r = poll(&ps, 1, 500);
 
+      struct msghdr header;
+      struct iovec msg_iovec;
+      int congestion_experienced = 0;
+  char msg_control[ 1500 ];
+  uint8_t *ecn_octet_p = NULL;
+
+  /* receive source address */
+//  header.msg_name = &packet_remote_addr.sa;
+//  header.msg_namelen = sizeof( packet_remote_addr );
+
+  /* receive payload */
+  msg_iovec.iov_base = rbuf;
+  msg_iovec.iov_len = 1500;
+  header.msg_iov = &msg_iovec;
+  header.msg_iovlen = 1;
+
+  /* receive explicit congestion notification */
+  header.msg_control = msg_control;
+  header.msg_controllen = 1500;
+
+  /* receive flags */
+  header.msg_flags = 0;
+
       if (ps.revents & POLLIN || ps.revents & POLLERR) {
-        r = recv(s, rbuf, sizeof rbuf, 0);
+        r = recvmsg(s, &header,  0);
         if (r < 0) {
           perror("recv");
 	  error = 1;
 	  break;
         }
+
+      struct cmsghdr *ecn_hdr = CMSG_FIRSTHDR( &header );
+  if ( ecn_hdr
+       && (ecn_hdr->cmsg_level == IPPROTO_IP)
+       && (ecn_hdr->cmsg_type == IP_TOS) ) {
+    /* got one */
+    ecn_octet_p = (uint8_t *)CMSG_DATA( ecn_hdr );
+
+    if ( (*ecn_octet_p & 0x03) == 0x03 ) {
+      congestion_experienced = 1;
+    }
+  }
+	
         ntohmsg(rm);
 #if 0
         printf("recv: %d - %08x %08x %08x %08x %08x\n", r,
@@ -315,6 +381,8 @@ int main(int argc, char *argv[])
 	if (rm->n < tm->n) {
 		memcpy(&log[rm->n].msg,rm,sizeof(struct msg));
 	}
+	if(congestion_experienced)
+	  ect_seen++;
         if (count > 0 && rm->n < recent)
           out_of_order++;
         if (count > 0 && rm->n == recent)
@@ -339,8 +407,10 @@ int main(int argc, char *argv[])
     } while (r > 0);
 
     if (count > 0 || error == 0) {
-      printf("%d bytes -- received %d of %d -- %d consecutive %d ooo %d dups\n",
-	     tm->size, count, tm->n, consecutive, out_of_order, adjacent_dups);
+      printf("%d bytes -- received %d of %d -- %d consecutive %d ooo %d dups"
+	     " %d ect\n",
+	     tm->size, count, tm->n, consecutive, out_of_order, adjacent_dups,
+	     ect_seen);
       for(int i = 0; i < tm->n; i++) {
 	if(log[i].msg.n > 0) printf("."); else printf(" ");
 	  if(i%72==0) printf("\n");
