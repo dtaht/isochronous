@@ -108,6 +108,7 @@ static uint32_t want_timestamps = 0;
 static uint32_t want_tos = 0;
 static uint32_t want_server = 0;
 static double packets_per_sec = 0.0;
+static const int timeout = 16;
 
 static int dscp_cs[] = { 8<<2, 32<<2, 48<<2, 00 }; // CS1, CS5, CS6, BE
 
@@ -452,8 +453,7 @@ int main(int argc, char *argv[])
         r = recvmsg(s, &header,  0);
         if (r < 0) {
           perror("recv");
-	  error = 1;
-	  break;
+	  if(++error > timeout) continue; else break;
         }
 	
 	struct cmsghdr *ecn_hdr = CMSG_FIRSTHDR( &header );
