@@ -12,6 +12,8 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ * Author: Tim Shepard
  */
 
 #include <sys/types.h>
@@ -41,11 +43,14 @@ void pe(char *s)
 
 #define MAGIC 0x31f71dc1
 
+#define CMD_SEND 1
+#define CMD_SINK 2
+#define CMD_BIDR 3
+#define CMD_TEST 4
+
 struct msg {
   u_int32_t magic;
   u_int32_t cmd;
-#define CMD_SEND 1
-#define CMD_SINK 2
   u_int32_t cookie;
   u_int32_t n;
   u_int32_t size;
@@ -55,6 +60,16 @@ struct logger {
   struct msg msg;
   struct timeval ts;
   uint8_t tos;
+};
+
+/* summary of results */
+
+struct results {
+  uint32_t consecutive;
+  uint32_t out_of_order;
+  uint32_t adjacent_dups;
+  uint32_t count;
+  uint32_t recent;
 };
 
 void htonmsg(struct msg *m)
@@ -93,6 +108,21 @@ static uint32_t want_timestamps = 0;
 static uint32_t want_tos = 0;
 static uint32_t want_server = 0;
 static double packets_per_sec = 0.0;
+
+static int dscp_cs[] = { 0x20, 0x28, 0x30, 0x38, 0x40, 0x48, 0x50 }; 
+
+void sweep_dscp(int s, int ecn)
+{
+  static int cur = 0;
+  int dscp = cur | ecn;
+  if ( setsockopt( s, IPPROTO_IPV6, IPV6_TCLASS, &dscp, sizeof (dscp)) < 0 ) {
+    perror( "setsockopt( IPV6_TCLASS )" );
+  }
+  if ( setsockopt( s, IPPROTO_IP, IP_TOS, &dscp, sizeof (dscp)) < 0 ) {
+    perror( "setsockopt( IP_TOS )" );
+  }
+  cur = ( cur + 4 ) % 255;
+}
 
 int server(void)
 {
@@ -161,6 +191,9 @@ int server(void)
 
     for  (i = 0; i < rm->n; i++) {
       tm->n = htonl(i);
+      if(sweep) {
+	sweep_dscp(s,ecn);
+      }
       r = sendto(s, tbuf, rm->size, 0, (struct sockaddr *) &rsa, rsa_len);
       if (r < 0) pe("sendto");
       if (r < (int) rm->size)
@@ -200,13 +233,14 @@ static void usage_and_die(char *argv0, int n, int size) {
       		      "    or    -t{o} host\n"
       		      "    or    -b{dir} host\n"
 	              "    or    -S server mode\n"
-      		      "          [ -n number ] (default = %d)\n"
+      		      "          [ -c count ] (default = %d)\n"
 	              "          [ -s size ] (default = %d\n"
 	              "          [ -q ] quiet \n"
 	              "          [ -d ] print dots \n"
 	              "          [ -E ] enable ecn\n"
 	              "          [ -D value ] dscp (tos) value \n"
 	              "          [ -C ] print dscp (tos) values \n"
+	              "          [ -W ] sweep dscp (tos) values \n"
 	              "          [ -r value ] packets_per_sec \n"
 	              "          [ -T ] timestamp recv \n"
 	      "          [ -h ] help \n",
@@ -247,7 +281,7 @@ int main(int argc, char *argv[])
     tm->n = 32;
     tm->cookie = getpid();
 
-    while ((c = getopt(argc, argv, "f:t:s:n:D:r:SEqdTCh?")) >= 0) {
+    while ((c = getopt(argc, argv, "f:t:s:n:D:r:c:SEqdTCWh?")) >= 0) {
       switch (c) {
       case 'f':
 	tm->cmd = CMD_SEND;
@@ -255,10 +289,10 @@ int main(int argc, char *argv[])
       case 't':
 	tm->cmd = CMD_SINK;
 	break;
-	// case 'b':
-	// tm->cmd = CMD_BIDIR;
-	// break;
-      case 'n':
+      case 'b':
+        tm->cmd = CMD_BIDR;
+	break;
+      case 'c':
 	tm->n = sizetoi(optarg);
 	break;
       case 'S':
@@ -278,6 +312,9 @@ int main(int argc, char *argv[])
 	break;
       case 'E':
 	ecn = 2;
+	break;
+      case 'W':
+	sweep = 1;
 	break;
       case 'C':
 	want_tos = 1;
