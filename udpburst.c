@@ -457,6 +457,8 @@ int main(int argc, char *argv[])
 		     && ecn_hdr->cmsg_type == IPV6_TCLASS)))
 	  {
 	  /* got one */
+	    fprintf(stderr,"cmsg_type: %d, cmsg_level: %d\n", 
+		    ecn_hdr->cmsg_type, ecn_hdr->cmsg_level); 
 	  ecn_octet_p = (uint8_t *)CMSG_DATA( ecn_hdr );
 	  
 	  if ( (*ecn_octet_p & 0x03) == 0x03 ) {
