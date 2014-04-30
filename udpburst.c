@@ -398,6 +398,13 @@ int main(int argc, char *argv[])
 #else
 #warning NO IP_RECVTOS
 #endif
+#ifdef IPV6_RECVTCLASS
+  if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVTCLASS, &tosflag, sizeof(tosflag)) < 0) {
+    perror("IPV6_RECVTCLASS");
+  }
+#else
+#warning NO IPV6_RECVTCLASS
+#endif
 
     r = send(s, tm, sizeof *tm, 0);
     if (r < 0) {
@@ -483,7 +490,8 @@ int main(int argc, char *argv[])
         }
 	if (rm->n < tm->n) {
 		memcpy(&log[rm->n].msg,rm,sizeof(struct msg));
-		log[rm->n].tos = *ecn_octet_p;
+		if(ecn_octet_p != NULL) 
+		  log[rm->n].tos = *ecn_octet_p;
 	}
 
 	if(congestion_experienced)
