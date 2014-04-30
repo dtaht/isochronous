@@ -109,19 +109,19 @@ static uint32_t want_tos = 0;
 static uint32_t want_server = 0;
 static double packets_per_sec = 0.0;
 
-static int dscp_cs[] = { 0x20, 0x28, 0x30, 0x38, 0x40, 0x48, 0x50 }; 
+static int dscp_cs[] = { 8<<2, 32<<2, 48<<2, 00 }; // CS1, CS5, CS6, BE
 
 void sweep_dscp(int s, int ecn)
 {
   static int cur = 0;
-  int dscp = cur | ecn;
+  int dscp = dscp_cs[cur] | ecn;
   if ( setsockopt( s, IPPROTO_IPV6, IPV6_TCLASS, &dscp, sizeof (dscp)) < 0 ) {
-    perror( "setsockopt( IPV6_TCLASS )" );
+    //   perror( "setsockopt( IPV6_TCLASS )" );
   }
   if ( setsockopt( s, IPPROTO_IP, IP_TOS, &dscp, sizeof (dscp)) < 0 ) {
     perror( "setsockopt( IP_TOS )" );
   }
-  cur = ( cur + 4 ) % 255;
+  cur = (cur + 1) % (sizeof(dscp_cs)-1);
 }
 
 int server(void)
