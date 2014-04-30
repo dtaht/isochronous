@@ -45,8 +45,7 @@ void pe(char *s)
 
 #define CMD_SEND 1
 #define CMD_SINK 2
-#define CMD_BIDR 3
-#define CMD_TEST 4
+#define CMD_TEST 3
 
 struct msg {
   u_int32_t magic;
@@ -232,7 +231,6 @@ int sizetoi(char *p)
 static void usage_and_die(char *argv0, int n, int size) {
       fprintf(stderr, "usage: %s -f{rom} host\n"
       		      "    or    -t{o} host\n"
-      		      "    or    -b{dir} host\n"
 	              "    or    -S server mode\n"
       		      "          [ -c count ] (default = %d)\n"
 	              "          [ -s size ] (default = %d\n"
@@ -282,16 +280,13 @@ int main(int argc, char *argv[])
     tm->n = 32;
     tm->cookie = getpid();
 
-    while ((c = getopt(argc, argv, "f:t:s:n:D:r:c:SEqdTCWh?")) >= 0) {
+    while ((c = getopt(argc, argv, "fts:n:D:r:c:SEqdTCWh?")) >= 0) {
       switch (c) {
       case 'f':
 	tm->cmd = CMD_SEND;
 	break;
       case 't':
 	tm->cmd = CMD_SINK;
-	break;
-      case 'b':
-        tm->cmd = CMD_BIDR;
 	break;
       case 'c':
 	tm->n = sizetoi(optarg);
@@ -350,10 +345,12 @@ int main(int argc, char *argv[])
     hints.ai_protocol = 0;
 
     snprintf(asciiport, sizeof asciiport, "%d", PORT);
+    
+    if(optind >= argc) usage_and_die(argv[0],rm->n, rm->size);
 
-    s = getaddrinfo(argv[2], asciiport, &hints, &result);
+    s = getaddrinfo(argv[optind], asciiport, &hints, &result);
     if (s != 0) {
-      fprintf(stderr, "getaddrinfo: %s: %s\n", argv[2], gai_strerror(s));
+      fprintf(stderr, "getaddrinfo: %s: %s\n", argv[optind], gai_strerror(s));
       exit(1);
     }
 
