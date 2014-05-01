@@ -140,10 +140,17 @@ int test_burst(void) {
 int server(void)
 {
   int s, r;
+  const int ipv6only = 1;
+  struct pollfd p[2];
   struct sockaddr_in6 sa, rsa;
+  struct sockaddr_in  sa4, rsa4;
 
-  s = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
-  if (s < 1) pe("socket");
+  p[1].events = p[0].events = POLLIN;
+  p[0].fd = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+  p[1].fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+  if (p[0].fd < 1) pe("socket");
+  if (p[1].fd < 1) pe("socket");
 
   sa.sin6_family = AF_INET6;
   sa.sin6_port = htons(PORT);
@@ -151,20 +158,39 @@ int server(void)
   sa.sin6_addr = in6addr_any;
   sa.sin6_scope_id = 0;
 
-  r = bind(s, (struct sockaddr *) &sa, sizeof sa);
-  if (r < 0) pe("bind");
-  dscp |= ecn;
+  r = setsockopt(p[0].fd, IPPROTO_IPV6,
+			 IPV6_V6ONLY, (char*)&ipv6only, sizeof(ipv6only) );
 
-  if ( setsockopt( s, IPPROTO_IPV6, IPV6_TCLASS, &dscp, sizeof (dscp)) < 0 ) {
+  r = bind(p[0].fd, (struct sockaddr *) &sa, sizeof sa);
+  if (r < 0) pe("bind ipv6");
+
+  sa4.sin_family = AF_INET;
+  sa4.sin_port = htons(PORT);
+  sa4.sin_addr.s_addr =  htonl(INADDR_ANY);
+
+  r = bind(p[1].fd, (struct sockaddr *) &sa4, sizeof sa4);
+  if (r < 0) pe("bind ipv4");
+
+  if ( setsockopt( p[0].fd, IPPROTO_IPV6, IPV6_TCLASS, &dscp, sizeof (dscp)) < 0 ) {
     perror( "setsockopt( IPV6_TCLASS )" );
   }
-  if ( setsockopt( s, IPPROTO_IP, IP_TOS, &dscp, sizeof (dscp)) < 0 ) {
+
+  if ( setsockopt( p[1].fd, IPPROTO_IP, IP_TOS, &dscp, sizeof (dscp)) < 0 ) {
     perror( "setsockopt( IP_TOS )" );
   }
 
+  dscp |= ecn;
   int tosbits=0;
+  
+  while(1) {
+    poll(p,2,-1);
 
-  do {
+  if(p[0].revents == POLLIN)
+    s = p[0].fd;
+  if(p[1].revents == POLLIN)
+    s = p[1].fd;
+
+  {
     struct msg *rm = (struct msg *) rbuf;
     struct msg *tm = (struct msg *) tbuf;
     u_int32_t i;
@@ -218,16 +244,18 @@ int server(void)
     m.msg_control = control;
     cmsg = CMSG_FIRSTHDR(&m);
 
-    cmsg->cmsg_level = IPPROTO_IPV6;
-    cmsg->cmsg_type = IPV6_TCLASS;
-    // cmsg->cmsg_level = IPPROTO_IP;
-    // cmsg->cmsg_type = IP_TOS;
+    if(s == p[0].fd) {
+      cmsg->cmsg_level = IPPROTO_IPV6;
+      cmsg->cmsg_type = IPV6_TCLASS;
+    } else {
+      cmsg->cmsg_level = IPPROTO_IP;
+      cmsg->cmsg_type = IP_TOS;
+    }
     cmsg->cmsg_len = CMSG_LEN(sizeof(int));
     fd_ptr = (int *) CMSG_DATA(cmsg);
     m.msg_name = (struct sockaddr *) &rsa;
     m.msg_namelen = sizeof(struct sockaddr_in6); // rsa_len;
     m.msg_controllen = cmsg->cmsg_len;
-    fprintf(stderr,"controllen: %ld\n",m.msg_controllen);
 
     for  (i = 0; i < rm->n; i++) {
       tm->n = htonl(i);
@@ -241,6 +269,7 @@ int server(void)
       if (r < (int) rm->size)
         fprintf(stderr, "short sendto (expected %d, got %d)\n", rm->size, r);
     }
+  }
   } while (1);
   return 0;
 }
@@ -275,7 +304,7 @@ static void usage_and_die(char *argv0, int n, int size) {
       		      "    or    -t{o} host\n"
 	              "    or    -S server mode\n"
       		      "          [ -c count ] (default = %d)\n"
-	              "          [ -s size ] (default = %d\n"
+	              "          [ -s size  ] (default = %d\n"
 	              "          [ -q ] quiet \n"
 	              "          [ -d ] print dots \n"
 	              "          [ -E ] enable ecn\n"
@@ -422,6 +451,7 @@ int main(int argc, char *argv[])
 
     myaddr.ai_addr = rp->ai_addr;
     myaddr.ai_addrlen = rp->ai_addrlen;
+    myaddr.ai_family = rp->ai_family;
 
     freeaddrinfo(result);
     
@@ -436,15 +466,19 @@ int main(int argc, char *argv[])
 #ifdef IP_RECVTOS
   int tosflag = 1;
   socklen_t tosoptlen = sizeof( tosflag );
-  if ( setsockopt( s, IPPROTO_IP, IP_RECVTOS, &tosflag, tosoptlen ) < 0 ) {
-    perror( "setsockopt( IP_RECVTOS )" );
+  if(myaddr.ai_family == AF_INET) {
+    if ( setsockopt( s, IPPROTO_IP, IP_RECVTOS, &tosflag, tosoptlen ) < 0 ) {
+      perror( "setsockopt( IP_RECVTOS )" );
+    }
   }
 #else
 #warning NO IP_RECVTOS
 #endif
 #ifdef IPV6_RECVTCLASS
-  if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVTCLASS, &tosflag, sizeof(tosflag)) < 0) {
-    perror("IPV6_RECVTCLASS");
+  if(myaddr.ai_family == AF_INET6) {
+    if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVTCLASS, &tosflag, sizeof(tosflag)) < 0) {
+      perror("IPV6_RECVTCLASS");
+    }
   }
 #else
 #warning NO IPV6_RECVTCLASS
