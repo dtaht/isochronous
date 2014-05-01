@@ -1,4 +1,4 @@
-CFLAGS+=-std=gnu99
+CFLAGS+=-std=gnu99 -g
 LDFLAGS+=-lrt -lm
 PROGS=udpburst isoping isostream
 
