@@ -204,10 +204,10 @@ int server(void)
     m.msg_control = control;
     cmsg = CMSG_FIRSTHDR(&m);
 
-    //    cmsg->cmsg_level = IPPROTO_IPV6;
-    //  cmsg->cmsg_type = IPV6_TCLASS;
-    cmsg->cmsg_level = IPPROTO_IP;
-    cmsg->cmsg_type = IP_TOS;
+    cmsg->cmsg_level = IPPROTO_IPV6;
+    cmsg->cmsg_type = IPV6_TCLASS;
+    // cmsg->cmsg_level = IPPROTO_IP;
+    // cmsg->cmsg_type = IP_TOS;
     cmsg->cmsg_len = CMSG_LEN(sizeof(int));
     fd_ptr = (int *) CMSG_DATA(cmsg);
     m.msg_name = (struct sockaddr *) &rsa;
