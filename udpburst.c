@@ -195,8 +195,13 @@ int server(void)
     struct msg *tm = (struct msg *) tbuf;
     u_int32_t i;
     socklen_t rsa_len = sizeof rsa;
+    socklen_t rsa4_len = sizeof rsa4;
 
-    r = recvfrom(s, rbuf, sizeof rbuf, 0, (struct sockaddr *) &rsa, &rsa_len);
+    if(s == p[0].fd) 
+      r = recvfrom(s, rbuf, sizeof rbuf, 0, (struct sockaddr *) &rsa, &rsa_len);
+    else
+      r = recvfrom(s, rbuf, sizeof rbuf, 0, (struct sockaddr *) &rsa4, &rsa4_len);
+
     if (r < 0) pe("recvfrom");
 
     if (r < (int) sizeof *rm) {
@@ -229,13 +234,12 @@ int server(void)
     tm->size = rm->size;
 
     htonmsg(tm);
-
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
     int *fd_ptr;
     struct msghdr m;
-    struct cmsghdr *cmsg; // = calloc(sizeof(struct cmsghdr), 1);
+    struct cmsghdr *cmsg;
     struct iovec    iov[2];
-    m.msg_controllen = CMSG_SPACE(sizeof(int));
+    m.msg_controllen = 2 * CMSG_SPACE(sizeof(int));
     char control[m.msg_controllen];
     iov[0].iov_base = tm;
     iov[0].iov_len = MAX(64,rm->size);
@@ -247,14 +251,17 @@ int server(void)
     if(s == p[0].fd) {
       cmsg->cmsg_level = IPPROTO_IPV6;
       cmsg->cmsg_type = IPV6_TCLASS;
+      m.msg_name = (struct sockaddr *) &rsa;
+      m.msg_namelen = sizeof(struct sockaddr_in6); // rsa_len;
     } else {
       cmsg->cmsg_level = IPPROTO_IP;
       cmsg->cmsg_type = IP_TOS;
+      m.msg_name = (struct sockaddr *) &rsa4;
+      m.msg_namelen = rsa4_len;
     }
     cmsg->cmsg_len = CMSG_LEN(sizeof(int));
     fd_ptr = (int *) CMSG_DATA(cmsg);
-    m.msg_name = (struct sockaddr *) &rsa;
-    m.msg_namelen = sizeof(struct sockaddr_in6); // rsa_len;
+    
     m.msg_controllen = cmsg->cmsg_len;
 
     for  (i = 0; i < rm->n; i++) {
