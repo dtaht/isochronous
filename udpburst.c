@@ -46,6 +46,7 @@ void pe(char *s)
 #define CMD_SEND 1
 #define CMD_SINK 2
 #define CMD_TEST 3
+#define CMD_TACK 4
 
 struct msg {
   u_int32_t magic;
@@ -54,6 +55,10 @@ struct msg {
   u_int32_t n;
   u_int32_t size;
 };
+
+/* CMD_TEST */
+
+/* CMD_TACK */
 
 struct logger {
   struct msg msg;
@@ -124,6 +129,14 @@ void sweep_dscp(int s, int ecn)
   cur = (cur + 1) % (sizeof(dscp_cs)-1);
 }
 
+struct socket_fd {
+  int fd;
+  int type;
+};
+
+int test_burst(void) {
+}
+
 int server(void)
 {
   int s, r;
@@ -191,6 +204,7 @@ int server(void)
 
     htonmsg(tm);
 
+#define MAX(x, y) (((x) > (y)) ? (x) : (y))
     int *fd_ptr;
     struct msghdr m;
     struct cmsghdr *cmsg; // = calloc(sizeof(struct cmsghdr), 1);
@@ -198,7 +212,7 @@ int server(void)
     m.msg_controllen = CMSG_SPACE(sizeof(int));
     char control[m.msg_controllen];
     iov[0].iov_base = tm;
-    iov[0].iov_len = 64;
+    iov[0].iov_len = MAX(64,rm->size);
     m.msg_iov = &iov[0];
     m.msg_iovlen = 1;
     m.msg_control = control;
