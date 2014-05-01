@@ -149,6 +149,8 @@ int server(void)
     perror( "setsockopt( IP_TOS )" );
   }
 
+  int tosbits=0;
+
   do {
     struct msg *rm = (struct msg *) rbuf;
     struct msg *tm = (struct msg *) tbuf;
@@ -189,12 +191,37 @@ int server(void)
 
     htonmsg(tm);
 
+    int *fd_ptr;
+    struct msghdr m;
+    struct cmsghdr *cmsg; // = calloc(sizeof(struct cmsghdr), 1);
+    struct iovec    iov[2];
+    char control[CMSG_SPACE(sizeof(int))];
+    iov[0].iov_base = tm;
+    iov[0].iov_len = 64;
+    m.msg_iov = &iov[0];
+    m.msg_iovlen = 1;
+    m.msg_control = control;
+    cmsg = CMSG_FIRSTHDR(&m);
+
+    //    cmsg->cmsg_level = IPPROTO_IPV6;
+    //  cmsg->cmsg_type = IPV6_TCLASS;
+    cmsg->cmsg_level = IPPROTO_IP;
+    cmsg->cmsg_type = IP_TOS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    fd_ptr = (int *) CMSG_DATA(cmsg);
+    m.msg_name = (struct sockaddr *) &rsa;
+    m.msg_namelen = rsa_len;
+    m.msg_controllen = cmsg->cmsg_len;
+    fprintf(stderr,"controllen: %ld\n",m.msg_controllen);
+
     for  (i = 0; i < rm->n; i++) {
       tm->n = htonl(i);
-      if(sweep) {
-	sweep_dscp(s,ecn);
-      }
-      r = sendto(s, tbuf, rm->size, 0, (struct sockaddr *) &rsa, rsa_len);
+      //      if(sweep) {
+      // sweep_dscp(s,ecn);
+      // }
+      //      r = sendto(s, tbuf, rm->size, 0, (struct sockaddr *) &rsa, rsa_len);
+      *fd_ptr = tosbits++ % 255;
+      r = sendmsg(s, &m, 0);
       if (r < 0) pe("sendto");
       if (r < (int) rm->size)
         fprintf(stderr, "short sendto (expected %d, got %d)\n", rm->size, r);
@@ -266,6 +293,7 @@ int main(int argc, char *argv[])
 
     struct addrinfo hints;
     struct addrinfo *result, *rp;
+    struct addrinfo myaddr;
 
     char asciiport[16];
 
@@ -377,8 +405,11 @@ int main(int argc, char *argv[])
       exit(1);
     }
 
-    freeaddrinfo(result);
+    myaddr.ai_addr = rp->ai_addr;
+    myaddr.ai_addrlen = rp->ai_addrlen;
 
+    freeaddrinfo(result);
+    
   dscp |= ecn;
 
   if ( setsockopt( s, IPPROTO_IP, IP_TOS, &dscp, sizeof (dscp)) < 0 ) {
