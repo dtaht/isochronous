@@ -195,7 +195,8 @@ int server(void)
     struct msghdr m;
     struct cmsghdr *cmsg; // = calloc(sizeof(struct cmsghdr), 1);
     struct iovec    iov[2];
-    char control[CMSG_SPACE(sizeof(int))];
+    m.msg_controllen = CMSG_SPACE(sizeof(int));
+    char control[m.msg_controllen];
     iov[0].iov_base = tm;
     iov[0].iov_len = 64;
     m.msg_iov = &iov[0];
@@ -210,7 +211,7 @@ int server(void)
     cmsg->cmsg_len = CMSG_LEN(sizeof(int));
     fd_ptr = (int *) CMSG_DATA(cmsg);
     m.msg_name = (struct sockaddr *) &rsa;
-    m.msg_namelen = rsa_len;
+    m.msg_namelen = sizeof(struct sockaddr_in6); // rsa_len;
     m.msg_controllen = cmsg->cmsg_len;
     fprintf(stderr,"controllen: %ld\n",m.msg_controllen);
 
@@ -462,7 +463,7 @@ int main(int argc, char *argv[])
 
       /* receive source address */
       //  header.msg_name = &packet_remote_addr.sa;
-      //  header.msg_namelen = sizeof( packet_remote_addr );
+      header.msg_namelen = sizeof( struct sockaddr_in6 );
 
       /* receive payload */
       msg_iovec.iov_base = rbuf;
