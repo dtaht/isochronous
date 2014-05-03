@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Author: Tim Shepard
+ * Authors: Tim Shepard, Dave Taht
  */
 
 #include <sys/types.h>
@@ -26,6 +26,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include "dscp.h"
+#include "test_dscp.h"
 
 #ifndef AI_NUMERICSERV
 /* some older linuxen lack this, so do without */
@@ -113,20 +115,54 @@ static uint32_t want_tos = 0;
 static uint32_t want_server = 0;
 static double packets_per_sec = 0.0;
 static const int timeout = 16;
+static char testname[32];
+static uint8_t *dscp_test;
 
-static int dscp_cs[] = { 8<<2, 32<<2, 48<<2, 00 }; // CS1, CS5, CS6, BE
+static uint8_t * dscp_data(int option)
+{
+  switch(option) {
+  case 1: return((uint8_t *) &test_cs); break;
+  case 2: return((uint8_t *) &test_wifi); break;
+  case 3: return((uint8_t *) &test_af); break;
+  case 4: return((uint8_t *) &test_tos); break;
+  case 5: return((uint8_t *) &test_all); break;
+  }
+  return 0;
+}
 
-void sweep_dscp(int s, int ecn)
+static int parse_sweep(char *option)
+{
+  if(strcmp(option,"cs") == 0) return 1;
+  if(strcmp(option,"wifi") == 0) return 2;
+  if(strcmp(option,"af") == 0) return 3;
+  if(strcmp(option,"tos") == 0) return 4;
+  if(strcmp(option,"all") == 0) return 5;
+  return 0;
+}
+
+uint32_t next_dscp(int ecn, const uint8_t *dscp_range)
+{
+  static int cur = 1;
+  uint32_t dscp = (int) dscp_range[cur] | ecn;
+  if (++cur > dscp_range[0]) cur = 1;
+  return dscp;
+}
+
+
+/* This generally does not manage to set the tos field reliably 
+   and I'm retaining it for a future test to see what happens */
+
+void sweep_dscp_setsockopt(int s, int ecn, uint8_t *dscp_range)
 {
   static int cur = 0;
-  int dscp = dscp_cs[cur] | ecn;
+  int dscp = dscp_range[cur] | ecn;
   if ( setsockopt( s, IPPROTO_IPV6, IPV6_TCLASS, &dscp, sizeof (dscp)) < 0 ) {
     //   perror( "setsockopt( IPV6_TCLASS )" );
   }
   if ( setsockopt( s, IPPROTO_IP, IP_TOS, &dscp, sizeof (dscp)) < 0 ) {
     perror( "setsockopt( IP_TOS )" );
   }
-  cur = (cur + 1) % (sizeof(dscp_cs)-1);
+  if (dscp_range[++cur] == -1) cur = 0;
 }
 
 struct socket_fd {
@@ -263,14 +299,9 @@ int server(void)
     fd_ptr = (int *) CMSG_DATA(cmsg);
     
     m.msg_controllen = cmsg->cmsg_len;
-
     for  (i = 0; i < rm->n; i++) {
       tm->n = htonl(i);
-      //      if(sweep) {
-      // sweep_dscp(s,ecn);
-      // }
-      //      r = sendto(s, tbuf, rm->size, 0, (struct sockaddr *) &rsa, rsa_len);
-      *fd_ptr = tosbits++ % 255;
+      *fd_ptr = sweep > 0 ? next_dscp(ecn,dscp_test) : dscp | ecn;
       r = sendmsg(s, &m, 0);
       if (r < 0) pe("sendto");
       if (r < (int) rm->size)
@@ -306,6 +337,17 @@ int sizetoi(char *p)
   return r;
 }
 
+void tests_show() {
+  fprintf(stderr, 
+	  "\nDefined diffserv tests:\n"
+	  "\t-W cs sweep cs values\n"
+	  "\t-W af sweep af values\n"
+	  "\t-W wifi sweep common wifi values\n"
+	  "\t-W tos  sweep tos values\n"
+	  "\t-W all sweep all defined diffserv values\n"
+	  );
+}
+
 static void usage_and_die(char *argv0, int n, int size) {
       fprintf(stderr, "usage: %s -f{rom} host\n"
       		      "    or    -t{o} host\n"
@@ -317,11 +359,12 @@ static void usage_and_die(char *argv0, int n, int size) {
 	              "          [ -E ] enable ecn\n"
 	              "          [ -D value ] dscp (tos) value \n"
 	              "          [ -C ] print dscp (tos) values \n"
-	              "          [ -W ] sweep dscp (tos) values \n"
 	              "          [ -r value ] packets_per_sec \n"
+	              "          [ -W test_name ] \n"
 	              "          [ -T ] timestamp recv \n"
 	      "          [ -h ] help \n",
               argv0, n, size);
+      tests_show();
       exit(99);
 }
 
@@ -359,7 +402,7 @@ int main(int argc, char *argv[])
     tm->n = 32;
     tm->cookie = getpid();
 
-    while ((c = getopt(argc, argv, "fts:n:D:r:c:SEqdTCWh?")) >= 0) {
+    while ((c = getopt(argc, argv, "fts:n:D:r:c:W:SEqdTCh?")) >= 0) {
       switch (c) {
       case 'f':
 	tm->cmd = CMD_SEND;
@@ -383,16 +426,16 @@ int main(int argc, char *argv[])
 	dots = 1;
 	break;
       case 'D':
-	dscp = atoi(optarg);
+	dscp = parse_ipqos(optarg);
 	break;
       case 'E':
 	ecn = 2;
 	break;
-      case 'W':
-	sweep = 1;
-	break;
       case 'C':
 	want_tos = 1;
+	break;
+      case 'W':
+	dscp_test = dscp_data(sweep = parse_sweep(optarg));
 	break;
       case 'T':
 	want_timestamps = 1;
@@ -547,9 +590,6 @@ int main(int argc, char *argv[])
 		 || ((ecn_hdr->cmsg_level == IPPROTO_IPV6)
 		     && ecn_hdr->cmsg_type == IPV6_TCLASS)))
 	  {
-	  /* got one */
-	    //    fprintf(stderr,"cmsg_type: %d, cmsg_level: %d\n", 
-	    //	    ecn_hdr->cmsg_type, ecn_hdr->cmsg_level); 
 	  ecn_octet_p = (uint8_t *)CMSG_DATA( ecn_hdr );
 	  
 	  if ( (*ecn_octet_p & 0x03) == 0x03 ) {

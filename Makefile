@@ -4,7 +4,7 @@ PROGS=udpburst isoping isostream
 
 all: $(PROGS)
 
-udpburst: udpburst.c
+udpburst: udpburst.c dscp.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
 isoping: isoping.c
