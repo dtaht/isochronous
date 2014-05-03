@@ -65,6 +65,7 @@ struct msg {
 struct logger {
   struct msg msg;
   struct timeval ts;
+  uint32_t arrival;
   uint8_t tos;
 };
 
@@ -106,6 +107,7 @@ char tbuf[64 * 1024];
 static uint32_t ecn = 0;
 static uint32_t ecn_seen = 0;
 static uint32_t ect_seen = 0;
+static uint32_t arrivals = 0;
 static uint32_t dscp = 0;
 static uint32_t dots = 0;
 static uint32_t quiet = 0;
@@ -616,6 +618,7 @@ int main(int argc, char *argv[])
 		memcpy(&log[rm->n].msg,rm,sizeof(struct msg));
 		if(ecn_octet_p != NULL) 
 		  log[rm->n].tos = *ecn_octet_p;
+		log[rm->n].arrival = arrivals++;
 	}
 
 	if(congestion_experienced)
@@ -656,9 +659,16 @@ int main(int argc, char *argv[])
       }
 
       if(want_tos) {
-      for(int i = 0; i < tm->n; i++) {
-	if(log[i].msg.n > 0) printf("%2x",log[i].tos); else printf("  ");
-	  if(i%36==0) printf("\n");
+        int i,j;
+        for(j = 0; j < tm->n; j++) {
+      	  for(i = 0; i < tm->n; i++) {
+		if(log[i].arrival == j) { 
+			printf("%02x",log[i].tos); 
+			break;
+		}
+	  }	
+	if(i==tm->n) printf("  ");
+	if(j%36==0) printf("\n");
 	}
       }
 
