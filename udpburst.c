@@ -41,9 +41,9 @@ void pe(char *s)
   exit(1);
 }
 
-#define PORT 19289
+#define PORT 19290
 
-#define MAGIC 0x31f71dc1
+#define MAGIC 0x31f71dc2
 
 #define CMD_SEND 1
 #define CMD_SINK 2
