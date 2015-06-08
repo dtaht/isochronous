@@ -14,6 +14,7 @@
  * limitations under the License.
  *
  * Authors: Tim Shepard, Dave Taht
+ * Derived from udpburst: https://gfiber.googlesource.com/vendor/google/platform/+/master/cmds/udpburst.c
  */
 
 #include <sys/types.h>
